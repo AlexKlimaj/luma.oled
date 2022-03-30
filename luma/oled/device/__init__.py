@@ -128,6 +128,92 @@ class sh1106(device):
 
             self.data(list(buf))
 
+class sh1107(device):
+    """
+    Serial interface to a monochrome sh1107 OLED display.
+
+    On creation, an initialization sequence is pumped to the display
+    to properly configure it. Further control commands can then be called to
+    affect the brightness and other settings.
+    """
+
+    def __init__(self, serial_interface=None, width=128, height=128, rotate=0, **kwargs):
+        super(sh1107, self).__init__(luma.oled.const.sh1107, serial_interface)
+        self.capabilities(width, height, rotate)
+        self._pages = self._h // 8
+
+        settings = {
+            (128, 128): dict(multiplex=0xFF, displayoffset=0x02),
+        }.get((width, height))
+
+        if settings is None:
+            raise luma.core.error.DeviceDisplayModeError(
+                f"Unsupported display mode: {width} x {height}")
+
+        self.command(
+            self._const.DISPLAYOFF,
+            self._const.SETDISPLAYCLOCKDIV,
+            self._const.OSCFREQ,
+            self._const.MEMORYMODE)
+
+        self.contrast(0x4F)
+       
+        self.command(
+            self._const.DCDCCONTROLMODE,    0x8A,
+            self._const.SETPRECHARGE,       0x22,
+            self._const.SETVCOMDETECT,      0x35)
+
+        self.clear()
+        self.show()
+
+    def display(self, image):
+        """
+        Takes a 1-bit :py:mod:`PIL.Image` and dumps it to the sh1107
+        OLED display.
+
+        :param image: Image to display.
+        :type image: :py:mod:`PIL.Image`
+        """
+        assert(image.mode == self.mode)
+        assert(image.size == self.size)
+
+        image = self.preprocess(image)
+
+        set_page_address = 0xB0
+        image_data = image.getdata()
+        pixels_per_page = self.width * 8
+        buf = bytearray(self.width)
+
+        for y in range(0, int(self._pages * pixels_per_page), pixels_per_page):
+            self.command(set_page_address, 0x02, 0x10)
+            set_page_address += 1
+            offsets = [y + self.width * i for i in range(8)]
+
+            for x in range(self.width):
+                buf[x] = \
+                    (image_data[x + offsets[0]] and 0x01) | \
+                    (image_data[x + offsets[1]] and 0x02) | \
+                    (image_data[x + offsets[2]] and 0x04) | \
+                    (image_data[x + offsets[3]] and 0x08) | \
+                    (image_data[x + offsets[4]] and 0x10) | \
+                    (image_data[x + offsets[5]] and 0x20) | \
+                    (image_data[x + offsets[6]] and 0x40) | \
+                    (image_data[x + offsets[7]] and 0x80)
+
+            self.data(list(buf))
+
+    def contrast(self, level):
+        """
+        Switches the display contrast to the desired level, in the range
+        0-255. Note that setting the level to a low (or zero) value will
+        not necessarily dim the display to nearly off. In other words,
+        this method is **NOT** suitable for fade-in/out animation.
+
+        :param level: Desired contrast level in the range of 0-255.
+        :type level: int
+        """
+        assert(0 <= level <= 255)
+        self.command(self._const.SETCONTRAST, level)
 
 class ssd1306(device):
     """
